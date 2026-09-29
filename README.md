@@ -1,216 +1,253 @@
-# URL Shortener
+# 🔗 URL Shortener
 
-## Sobre o projecto
+<p align="center">
+  <strong>Scalable URL Shortening Service</strong>
+</p>
 
-O URL Shortener é um serviço para criação e redireccionamento de URLs curtas, desenvolvido com foco na exploração de **escalabilidade, performance, caching, rate limiting e processamento assíncrono**.
+<p align="center">
+  Serviço de encurtamento de URLs desenvolvido com Java e Spring Boot, com foco em performance, caching, processamento assíncrono, resiliência e escalabilidade horizontal.
+</p>
 
-O projecto foi desenvolvido como uma implementação independente inspirada num desafio de System Design apresentado num conteúdo sobre construção de um URL Shortener orientado à escalabilidade. A arquitectura, implementação, testes e decisões técnicas foram desenvolvidos no âmbito deste projecto.
-
-O serviço permite:
-
-* criar URLs curtas;
-* redireccionar para a URL original;
-* aplicar rate limiting na criação de URLs;
-* utilizar cache para reduzir acessos à base de dados;
-* registar acessos de forma assíncrona;
-* consultar métricas básicas de utilização;
-* eliminar URLs existentes.
+<p align="center">
+  <a href="https://github.com/alfredobaptista/url-shortener">GitHub Repository</a>
+</p>
 
 ---
 
-## Contexto
+## 📌 Sobre o Projecto
 
-Um URL Shortener parece, à primeira vista, um sistema simples: receber uma URL, gerar um código curto e redireccionar o utilizador.
+O **URL Shortener** é uma implementação própria de um serviço de encurtamento de URLs, desenvolvida a partir de um desafio/conteúdo de **System Design** sobre a construção de um serviço capaz de lidar com grandes volumes de tráfego.
 
-O desafio aumenta quando o sistema precisa de lidar com um volume elevado de redireccionamentos.
+O projecto foi desenvolvido com foco não apenas na funcionalidade de encurtamento, mas principalmente nos problemas de engenharia envolvidos num sistema deste tipo:
 
-O caminho de redireccionamento é, por isso, tratado como o principal caminho crítico da aplicação. A arquitectura utiliza caching para reduzir a dependência do PostgreSQL e processamento assíncrono para retirar o registo de analytics do fluxo principal da resposta.
+* Performance e baixa latência
+* Caching
+* Rate limiting
+* Concorrência
+* Processamento assíncrono
+* Persistência
+* Analytics
+* Resiliência
+* Escalabilidade horizontal
 
-O projecto também explora mecanismos necessários para evolução futura da aplicação, como rate limiting e escalabilidade horizontal.
+A implementação utiliza **Clean Architecture / Ports & Adapters**, mantendo a lógica de negócio desacoplada dos mecanismos de persistência, cache, mensageria e infraestrutura.
 
 ---
 
-## Arquitectura
+## 🏗️ Arquitectura
 
-A implementação actual segue uma abordagem baseada em **Clean Architecture** e **Ports and Adapters**, separando o domínio, os casos de uso e os mecanismos externos de persistência, cache e mensageria.
+```mermaid
+flowchart LR
+    Client[Client]
 
-### Arquitectura actual
+    API[URL Shortener API]
 
-```text
-                         Client
-                    Bruno / Browser / k6
-                           │
-                           ▼
-                  ┌────────────────────┐
-                  │  URL Shortener API │
-                  │     Spring Boot    │
-                  └──────┬─────┬───────┘
-                         │     │
-             ┌───────────┘     └────────────┐
-             ▼                              ▼
-       ┌───────────┐                  ┌────────────┐
-       │   Redis   │                  │ PostgreSQL │
-       │           │                  │            │
-       │ URL Cache │                  │ URLs       │
-       │ Rate Limit│                  │ Analytics  │
-       └───────────┘                  └────────────┘
-                         │
-                         ▼
-                  ┌────────────┐
-                  │  RabbitMQ  │
-                  │            │
-                  │ Analytics  │
-                  │   Events   │
-                  └─────┬──────┘
-                        │
-                        ▼
-                ┌──────────────────┐
-                │ Analytics Consumer│
-                └────────┬─────────┘
-                         │
-                         ▼
-                    PostgreSQL
+    Redis[(Redis)]
+    PostgreSQL[(PostgreSQL)]
+    RabbitMQ[(RabbitMQ)]
+
+    Consumer[Analytics Consumer]
+
+    Client --> API
+
+    API --> Redis
+    API --> PostgreSQL
+
+    API --> RabbitMQ
+    RabbitMQ --> Consumer
+
+    Consumer --> PostgreSQL
 ```
 
-A API permanece stateless relativamente ao processamento das requisições, enquanto o estado necessário é mantido nos serviços externos.
-
----
-
-## Fluxo de redireccionamento
-
-O redireccionamento foi desenhado para minimizar o acesso ao PostgreSQL.
+### Fluxo de criação
 
 ```text
 Client
   │
-  │ GET /{shortCode}
   ▼
-URL Shortener API
+POST /api/v1/urls
   │
   ▼
+Rate Limiting
+  │
+  ▼
+Generate Base62 Code
+  │
+  ▼
+Persist PostgreSQL
+  │
+  ▼
+Cache Redis
+  │
+  ▼
+Return Short Code
+```
+
+### Fluxo de redireccionamento
+
+```text
+Client
+  │
+  ▼
+GET /{shortCode}
+  │
+  ▼
+Redis Cache
+  │
+  ├── HIT ──────────────┐
+  │                     │
+  └── MISS              │
+       │                │
+       ▼                │
+   PostgreSQL            │
+       │                │
+       ▼                │
+   Cache Redis           │
+       │                │
+       └────────────────┘
+                │
+                ▼
+          Publish Event
+                │
+                ▼
+          RabbitMQ
+                │
+                ▼
+       Analytics Consumer
+                │
+                ▼
+          PostgreSQL
+```
+
+---
+
+## 🎯 Principais Decisões Técnicas
+
+### Redis — Cache-Aside
+
+O Redis é utilizado como camada de cache para evitar consultas desnecessárias ao PostgreSQL durante os redireccionamentos.
+
+```text
+Request
+   │
+   ▼
 Redis
-  │
-  ├── Cache Hit ──────────────► 302 Redirect
-  │
-  └── Cache Miss
-          │
-          ▼
-      PostgreSQL
-          │
-          ▼
-       Redis
-          │
-          ▼
-      302 Redirect
-
-Em paralelo:
-
-URL Shortener API
-        │
-        ▼
-     RabbitMQ
-        │
-        ▼
-Analytics Consumer
+   │
+   ├── HIT  → Return URL
+   │
+   └── MISS
         │
         ▼
     PostgreSQL
+        │
+        ▼
+    Redis + Return
 ```
 
-O evento de analytics não bloqueia o redireccionamento. Se a publicação do evento falhar, a aplicação mantém a resposta de redireccionamento.
+O TTL do cache é calculado de acordo com a validade da URL.
 
 ---
 
-## Decisões de arquitectura
+### Redis + Lua — Rate Limiting
 
-### Cache-Aside com Redis
+O controlo de abuso utiliza Redis com um script Lua para realizar as operações de incremento e expiração de forma atómica.
 
-O Redis é utilizado como cache para o mapeamento entre o código curto e a URL original.
-
-No fluxo de redireccionamento:
-
-1. a aplicação consulta o Redis;
-2. em caso de cache hit, a URL é devolvida directamente;
-3. em caso de cache miss, a aplicação consulta o PostgreSQL;
-4. o resultado é colocado no Redis;
-5. o redireccionamento é efectuado.
-
-O TTL do cache é definido de acordo com a validade da URL. Para URLs sem data de expiração, é utilizado um TTL padrão.
-
-Esta abordagem reduz a frequência de consultas ao PostgreSQL no caminho crítico.
-
-### Rate Limiting
-
-A criação de URLs possui um mecanismo de controlo de requisições baseado em Redis.
-
-O contador é incrementado através de um script Lua executado atomicamente no Redis.
-
-A implementação actual utiliza uma janela de:
+Configuração actual:
 
 ```text
-10 requisições / minuto / client key
+10 requests / minuto / client
 ```
 
-Quando o limite é excedido, a API responde com:
+Quando o limite é excedido, a API retorna:
 
-```text
-HTTP 429 Too Many Requests
+```http
+429 Too Many Requests
 ```
 
-A utilização de uma operação atómica evita condições de corrida entre múltiplas requisições concorrentes.
+A utilização de Lua permite evitar condições de corrida entre múltiplas operações Redis.
 
-### Processamento assíncrono
+---
 
-Os acessos às URLs são publicados como eventos no RabbitMQ.
+### RabbitMQ — Processamento Assíncrono
 
-O fluxo é:
+Os eventos de acesso às URLs não bloqueiam o redireccionamento.
+
+Em vez de executar a persistência das métricas directamente no request:
 
 ```text
+HTTP Request
+     │
+     ▼
 Redirect
-   │
-   ▼
+     │
+     ▼
+Publish Event
+     │
+     ▼
+Return 302
+```
+
+O processamento das analytics ocorre posteriormente:
+
+```text
 RabbitMQ
-   │
-   ▼
+    │
+    ▼
 Analytics Consumer
-   │
-   ▼
+    │
+    ▼
 PostgreSQL
 ```
 
-Desta forma, a persistência do analytics não precisa de fazer parte do caminho síncrono do redireccionamento.
-
-### Analytics
-
-Cada redireccionamento gera um evento de analytics contendo o código curto e o momento do acesso.
-
-A aplicação disponibiliza informações básicas:
-
-* total de acessos;
-* primeiro acesso;
-* último acesso.
-
-O armazenamento dos eventos é efectuado de forma assíncrona pelo consumer.
-
-### Geração de Short Codes
-
-Os códigos curtos são gerados através de um alfabeto Base62:
-
-```text
-a-z
-A-Z
-0-9
-```
-
-Cada código possui actualmente 6 caracteres.
-
-A geração utiliza `SecureRandom`, evitando uma sequência previsível de códigos.
+Isto mantém o caminho crítico do redireccionamento mais simples e desacoplado do processamento das métricas.
 
 ---
 
-## Estrutura da aplicação
+### Base62
 
-A aplicação está organizada de acordo com a separação entre domínio, casos de uso e adaptadores externos.
+Os códigos das URLs são gerados utilizando caracteres alfanuméricos:
+
+```text
+0-9
+A-Z
+a-z
+```
+
+O projecto utiliza códigos de **6 caracteres** como configuração actual, por exemplo:
+
+```text
+bbVAZ9
+```
+
+A geração utiliza `SecureRandom`.
+
+---
+
+### Expiração de URLs
+
+Uma URL pode possuir uma data de expiração.
+
+Quando a URL expira:
+
+```text
+Request
+   │
+   ▼
+URL Lookup
+   │
+   ▼
+Expired?
+   │
+   └── Yes → UrlExpiredException
+```
+
+O TTL do Redis também é ajustado à data de expiração da URL.
+
+---
+
+## 🧱 Arquitectura de Código
+
+O projecto utiliza **Clean Architecture / Ports & Adapters**.
 
 ```text
 src/main/java/com/github/alfredobaptista/
@@ -223,9 +260,9 @@ src/main/java/com/github/alfredobaptista/
 │   │
 │   └── out
 │       ├── cache
-│       ├── generator
 │       ├── messaging
 │       ├── persistence
+│       ├── generator
 │       └── security
 │
 ├── application
@@ -237,32 +274,30 @@ src/main/java/com/github/alfredobaptista/
 │
 ├── config
 │
-└── domain
-    ├── exception
-    ├── model
-    └── valueobject
+├── domain
+│   ├── exception
+│   ├── model
+│   └── valueobject
+│
+└── UrlShortenerApplication.java
 ```
-
-O domínio não depende directamente de Spring, Redis, RabbitMQ ou PostgreSQL.
-
-As dependências externas são introduzidas através das portas da camada de aplicação e implementadas pelos respectivos adapters.
 
 ---
 
-## API
+## 🔌 API
 
 ### Criar URL
 
 ```http
 POST /api/v1/urls
+Content-Type: application/json
 ```
 
 Request:
 
 ```json
 {
-  "originalUrl": "https://example.com",
-  "expiresAt": null
+  "originalUrl": "https://www.example.com"
 }
 ```
 
@@ -274,26 +309,24 @@ Response:
 }
 ```
 
+---
+
 ### Redireccionar
 
 ```http
 GET /{shortCode}
 ```
 
-Exemplo:
-
-```http
-GET /bbVAZ9
-```
-
 Response:
 
-```text
-HTTP 302 Found
-Location: https://example.com
+```http
+HTTP/1.1 302 Found
+Location: https://www.example.com
 ```
 
-### Consultar analytics
+---
+
+### Consultar Analytics
 
 ```http
 GET /api/v1/urls/{shortCode}/analytics
@@ -310,213 +343,332 @@ Exemplo:
 }
 ```
 
+---
+
 ### Eliminar URL
 
 ```http
 DELETE /api/v1/urls/{shortCode}
 ```
 
-A operação remove o registo persistido e invalida a entrada correspondente no Redis.
+A operação remove a URL da persistência e invalida a entrada correspondente no Redis.
 
 ---
 
-## Testes
+## 🧪 Testes
 
-A aplicação possui **35 testes automatizados**, cobrindo as principais regras de domínio, casos de uso e componentes da aplicação.
+O projecto possui testes unitários utilizando:
 
-A organização dos testes segue o padrão:
+* JUnit 5
+* Mockito
 
-```text
-Arrange → Act → Assert
-```
-
-Entre os cenários testados estão:
-
-* criação de URLs;
-* rate limiting;
-* persistência de URLs;
-* utilização do cache;
-* cache miss;
-* URLs expiradas;
-* URLs inexistentes;
-* falhas na publicação de analytics;
-* eliminação de URLs;
-* analytics;
-* validação de `ShortCode`;
-* validação de `OriginalUrl`;
-* geração de códigos Base62;
-* inicialização do contexto Spring.
-
-Resultado actual:
-
-```text
-Tests run: 35
-Failures: 0
-Errors: 0
-Skipped: 0
-BUILD SUCCESS
-```
-
----
-
-## Benchmark de performance
-
-Foi utilizado o k6 para avaliar o comportamento do endpoint de redireccionamento sob diferentes níveis de concorrência.
-
-O teste foi realizado localmente utilizando o mesmo código curto e com o cache activo.
-
-O teste não representa capacidade de produção. O objectivo foi observar o comportamento do sistema à medida que a concorrência aumenta.
-
-### 10 VUs
-
-```text
-Requests: 48 012
-Throughput: ~1 600 req/s
-HTTP failures: 0%
-p95: 12,61 ms
-```
-
-### 50 VUs
-
-```text
-Requests: 77 635
-Throughput: ~2 585 req/s
-HTTP failures: 0%
-p95: 45,71 ms
-```
-
-### 100 VUs
-
-```text
-Requests: 65 845
-Throughput: ~2 184 req/s
-HTTP failures: 0%
-p95: 129,77 ms
-```
-
-Em todos os cenários, as verificações do teste confirmaram respostas HTTP `302`.
-
----
-
-## Resultados
-
-Os testes demonstraram que o sistema conseguiu manter respostas correctas sem erros HTTP durante os cenários executados.
-
-À medida que a concorrência aumentou, o throughput deixou de crescer de forma linear e a latência aumentou.
-
-O cenário de 100 VUs apresentou uma utilização significativamente maior dos recursos da máquina local, indicando que a capacidade computacional do ambiente passou a influenciar o comportamento observado.
-
-Estes resultados devem ser interpretados como **benchmarks do ambiente de desenvolvimento**, e não como uma capacidade garantida de produção.
-
----
-
-## Limitações
-
-O benchmark apresenta algumas limitações:
-
-* execução numa única máquina;
-* uma única instância da aplicação;
-* ambiente local;
-* Redis, PostgreSQL e RabbitMQ executados localmente;
-* ausência de Load Balancer;
-* ausência de múltiplas instâncias da API;
-* k6 e aplicação a partilhar os recursos da mesma máquina;
-* utilização de um cenário de cache quente;
-* teste concentrado principalmente no endpoint de redireccionamento.
-
-Consequentemente, os valores obtidos não devem ser utilizados como estimativa directa de capacidade numa infraestrutura de produção.
-
----
-
-## Evolução da arquitectura
-
-Uma evolução natural do sistema consiste em executar múltiplas instâncias da API atrás de um Load Balancer.
-
-```text
-                         Client
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │ Load Balancer│
-                    └──────┬───────┘
-                           │
-             ┌─────────────┼─────────────┐
-             ▼             ▼             ▼
-        ┌─────────┐   ┌─────────┐   ┌─────────┐
-        │ API #1  │   │ API #2  │   │ API #3  │
-        └────┬────┘   └────┬────┘   └────┬────┘
-             │             │             │
-             └─────────────┼─────────────┘
-                           │
-              ┌────────────┴────────────┐
-              ▼                         ▼
-         ┌────────┐               ┌────────────┐
-         │ Redis  │               │ PostgreSQL │
-         └────────┘               └────────────┘
-                                        ▲
-                                        │
-                                   ┌────┴─────┐
-                                   │ RabbitMQ │
-                                   └──────────┘
-```
-
-A API foi estruturada de forma a permitir esta evolução sem depender de estado local entre instâncias.
-
-Possíveis evoluções incluem:
-
-* escalabilidade horizontal da API;
-* Load Balancer;
-* Redis partilhado;
-* optimização e dimensionamento do PostgreSQL;
-* escalabilidade dos consumers de RabbitMQ;
-* testes de carga num ambiente distribuído.
-
----
-
-## Execução local
-
-### Pré-requisitos
-
-É necessário ter instalado:
-
-```text
-Java 21
-Docker
-Docker Compose
-```
-
-### Infraestrutura
-
-Iniciar os serviços de infraestrutura:
-
-```bash
-docker compose up -d
-```
-
-### Aplicação
-
-Executar:
-
-```bash
-./mvnw spring-boot:run
-```
-
-A API ficará disponível em:
-
-```text
-http://localhost:8080
-```
-
-### Testes
-
-Executar todos os testes:
+Execução:
 
 ```bash
 ./mvnw clean test
 ```
 
-### Build
+Resultado actual:
+
+```text
+35 tests
+0 failures
+0 errors
+```
+
+Principais componentes testados:
+
+* criação de URLs
+* redireccionamento
+* eliminação
+* analytics
+* geração de códigos
+* value objects
+* regras de negócio
+
+---
+
+## ⚡ Testes de Carga
+
+Os testes de carga foram realizados com **k6** em ambiente local.
+
+Os resultados abaixo representam o comportamento observado no ambiente de desenvolvimento e **não constituem uma medição de capacidade de produção**.
+
+| VUs | Requests |   Throughput | Failures |      Avg |       p95 |
+| --: | -------: | -----------: | -------: | -------: | --------: |
+|  10 |  ~48.012 | ~1.600 req/s |       0% |  5.89 ms |  12.61 ms |
+|  50 |  ~77.635 | ~2.585 req/s |       0% |    19 ms |  45.71 ms |
+| 100 |  ~72.377 | ~2.408 req/s |       0% | 41.18 ms | 117.01 ms |
+
+### Observação
+
+Com o aumento da concorrência, o throughput deixa de crescer de forma linear enquanto a latência aumenta.
+
+Isto evidencia a importância de distribuir a carga entre múltiplas instâncias da aplicação e utilizar componentes partilhados para estado e dados.
+
+---
+
+## 📈 Escalabilidade
+
+A arquitectura foi concebida para permitir evolução de uma única instância para múltiplas instâncias da API.
+
+### Arquitectura actual
+
+```text
+             ┌──────────────┐
+             │    Client    │
+             └──────┬───────┘
+                    │
+                    ▼
+             ┌──────────────┐
+             │     API      │
+             └──────┬───────┘
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+     Redis      PostgreSQL   RabbitMQ
+```
+
+### Evolução horizontal
+
+```text
+                    Client
+                      │
+                      ▼
+              ┌──────────────┐
+              │ Load Balancer│
+              └───────┬──────┘
+                      │
+          ┌───────────┼───────────┐
+          ▼           ▼           ▼
+       API #1       API #2       API #3
+          │           │           │
+          └───────────┼───────────┘
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+     Redis        PostgreSQL     RabbitMQ
+```
+
+Como Redis, PostgreSQL e RabbitMQ são externos às instâncias da API, várias instâncias podem partilhar o mesmo estado.
+
+### Possíveis evoluções
+
+* Load Balancer
+* múltiplas instâncias da API
+* Redis Cluster
+* PostgreSQL com read replicas
+* RabbitMQ com múltiplos consumers
+* observabilidade distribuída
+* métricas e tracing
+* políticas de retenção de analytics
+* optimização adicional da geração de códigos
+
+Estas são **evoluções arquitecturais**, não capacidades que o projecto actualmente reivindica possuir em produção.
+
+---
+
+## 🛠️ Stack Tecnológica
+
+| Categoria       | Tecnologias                           |
+| --------------- | ------------------------------------- |
+| Linguagem       | Java 21                               |
+| Framework       | Spring Boot                           |
+| API             | REST                                  |
+| Persistência    | PostgreSQL                            |
+| Cache           | Redis                                 |
+| Mensageria      | RabbitMQ                              |
+| Migrações       | Flyway                                |
+| Testes          | JUnit 5 · Mockito                     |
+| Load Testing    | k6                                    |
+| Containerização | Docker · Docker Compose               |
+| Arquitectura    | Clean Architecture · Ports & Adapters |
+| Build           | Maven                                 |
+
+---
+
+## 🐳 Execução com Docker
+
+### Pré-requisitos
+
+* Docker
+* Docker Compose
+* Git
+
+Clonar o projecto:
 
 ```bash
-./mvnw clean package
+git clone git@github.com:alfredobaptista/url-shortener.git
+cd url-shortener
 ```
+
+Construir e iniciar os serviços:
+
+```bash
+docker compose up --build
+```
+
+A aplicação ficará disponível em:
+
+```text
+http://localhost:8080
+```
+
+RabbitMQ Management:
+
+```text
+http://localhost:15672
+```
+
+Credenciais locais:
+
+```text
+username: admin
+password: admin123
+```
+
+---
+
+## 💻 Execução Local
+
+Caso pretenda executar a aplicação directamente com Maven:
+
+```bash
+./mvnw spring-boot:run
+```
+
+O ambiente de desenvolvimento utiliza:
+
+```text
+PostgreSQL
+localhost:5432
+
+Redis
+localhost:6379
+
+RabbitMQ
+localhost:5672
+```
+
+As migrações da base de dados são executadas através do **Flyway**.
+
+---
+
+## 🗄️ Serviços
+
+### PostgreSQL
+
+Responsável pela persistência de:
+
+* URLs
+* analytics
+* timestamps
+* estado persistente da aplicação
+
+### Redis
+
+Responsável por:
+
+* cache das URLs
+* rate limiting
+* controlo temporário de acesso
+
+### RabbitMQ
+
+Responsável por:
+
+* publicação de eventos
+* processamento assíncrono
+* desacoplamento entre redirect e analytics
+
+---
+
+## 🔐 Considerações de Segurança
+
+O projecto inclui mecanismos básicos para reduzir abuso da API, nomeadamente:
+
+* Rate limiting
+* Validação das URLs
+* Limitação do tamanho do short code
+* Utilização de `SecureRandom` na geração dos códigos
+* Execução do container da aplicação com utilizador não-root
+
+A aplicação não pretende representar uma solução completa de segurança para um ambiente de produção.
+
+---
+
+## 📊 Observações sobre Performance
+
+Os benchmarks apresentados foram realizados numa máquina local, onde:
+
+```text
+Application
+PostgreSQL
+Redis
+RabbitMQ
+k6
+```
+
+podem partilhar os mesmos recursos computacionais.
+
+Consequentemente, os resultados servem principalmente para observar o comportamento da implementação sob carga e não para afirmar uma capacidade específica de produção.
+
+O principal objectivo do teste foi observar:
+
+* evolução do throughput
+* comportamento da latência
+* taxa de erros
+* impacto do aumento da concorrência
+
+---
+
+## 🧠 Conceitos Explorados
+
+Este projecto foi utilizado para aprofundar conceitos de:
+
+* Clean Architecture
+* Ports & Adapters
+* Domain-Driven Design
+* Cache-Aside
+* Distributed Rate Limiting
+* Redis Lua Scripts
+* Message Queues
+* Event-Driven Architecture
+* Asynchronous Processing
+* Idempotência
+* Concorrência
+* URL Expiration
+* Analytics
+* Horizontal Scaling
+* Load Testing
+* Performance Analysis
+* Containerização
+
+---
+
+## 📚 Referência
+
+O projecto foi desenvolvido como uma **implementação própria inspirada num desafio/conteúdo de System Design sobre URL Shortening e escalabilidade**.
+
+A implementação, decisões técnicas, estrutura do código, testes e validação foram realizados no âmbito deste projecto.
+
+---
+
+## 👨‍💻 Autor
+
+**Alfredo Baptista**
+
+Backend Developer | Java · Spring Boot · System Design · System Integration
+
+
+[GitHub](https://github.com/alfredobaptista) · [LinkedIn](https://www.linkedin.com/in/alfredobaptista/)
+
+---
+
+<p align="center">
+  <strong>Java • Spring Boot • Redis • PostgreSQL • RabbitMQ • Docker</strong>
+</p>
+
+<p align="center">
+  Desenvolvido com foco em arquitectura, performance e escalabilidade.
+</p>
