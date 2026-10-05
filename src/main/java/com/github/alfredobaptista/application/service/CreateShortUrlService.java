@@ -2,12 +2,12 @@ package com.github.alfredobaptista.application.service;
 
 import com.github.alfredobaptista.application.dto.CreateShortUrlCommand;
 import com.github.alfredobaptista.application.dto.ShortUrlResult;
+import com.github.alfredobaptista.application.exception.RateLimitExceededException;
 import com.github.alfredobaptista.application.port.in.CreateShortUrlUseCase;
 import com.github.alfredobaptista.application.port.out.AbuseChecker;
 import com.github.alfredobaptista.application.port.out.ShortCodeGenerator;
 import com.github.alfredobaptista.application.port.out.UrlCache;
 import com.github.alfredobaptista.application.port.out.UrlRepository;
-import com.github.alfredobaptista.domain.exception.RateLimitExceededException;
 import com.github.alfredobaptista.domain.model.Url;
 import com.github.alfredobaptista.domain.valueobject.OriginalUrl;
 import com.github.alfredobaptista.domain.valueobject.ShortCode;

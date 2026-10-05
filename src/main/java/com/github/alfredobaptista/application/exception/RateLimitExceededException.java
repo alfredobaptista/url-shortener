@@ -1,4 +1,4 @@
-package com.github.alfredobaptista.domain.exception;
+package com.github.alfredobaptista.application.exception;
 
 public final class RateLimitExceededException
         extends RuntimeException {

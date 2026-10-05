@@ -8,6 +8,8 @@ import com.github.alfredobaptista.domain.exception.UrlExpiredException;
 import com.github.alfredobaptista.domain.exception.UrlNotFoundException;
 import com.github.alfredobaptista.domain.model.Url;
 import com.github.alfredobaptista.domain.valueobject.ShortCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -16,6 +18,9 @@ import java.util.Optional;
 
 @Service
 public class RedirectUrlService implements RedirectUrlUseCase {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(RedirectUrlService.class);
 
     private final UrlRepository urlRepository;
     private final UrlCache urlCache;
@@ -34,10 +39,9 @@ public class RedirectUrlService implements RedirectUrlUseCase {
     @Override
     public String redirect(String shortCode) {
 
-        // 1. Valida o código recebido
         ShortCode code = new ShortCode(shortCode);
 
-        // 2. Tenta obter a URL através do cache
+        
         Optional<String> cachedUrl = urlCache.get(
                 code.getValue()
         );
@@ -49,7 +53,6 @@ public class RedirectUrlService implements RedirectUrlUseCase {
             return cachedUrl.get();
         }
 
-        // 3. Cache miss → procura no banco de dados
         Url url = urlRepository.findByShortCode(code)
                 .orElseThrow(() ->
                         new UrlNotFoundException(
@@ -57,17 +60,15 @@ public class RedirectUrlService implements RedirectUrlUseCase {
                         )
                 );
 
-        // 4. Verifica se a URL expirou
+      
         if (url.isExpired()) {
             throw new UrlExpiredException(
                     "Esta URL curta expirou."
             );
         }
 
-        // 5. Calcula o TTL restante
         Duration ttl = calculateCacheTtl(url);
 
-        // 6. Repopula o cache
         if (!ttl.isZero() && !ttl.isNegative()) {
             urlCache.save(
                     code.getValue(),
@@ -76,10 +77,8 @@ public class RedirectUrlService implements RedirectUrlUseCase {
             );
         }
 
-        // 7. Publica o evento de analytics
         publishAnalytics(code);
 
-        // 8. Retorna a URL original
         return url.getOriginalUrl().getValue();
     }
 
@@ -87,10 +86,15 @@ public class RedirectUrlService implements RedirectUrlUseCase {
 
         try {
             analyticsPublisher.publishRedirect(shortCode);
-        } catch (Exception ignored) {
-            // ignored.printStackTrace();
-            // Falhas no sistema de analytics não devem
-            // impedir o redireccionamento.
+        } catch (Exception e) {
+
+      
+            log.warn(
+                    "Não foi possível publicar o evento de analytics " +
+                    "para shortCode={}",
+                    shortCode.getValue(),
+                    e
+            );
         }
     }
 

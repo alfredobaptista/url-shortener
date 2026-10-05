@@ -8,8 +8,8 @@ import com.github.alfredobaptista.application.dto.UrlAnalyticsResult;
 import com.github.alfredobaptista.application.port.in.CreateShortUrlUseCase;
 import com.github.alfredobaptista.application.port.in.DeleteShortUrlUseCase;
 import com.github.alfredobaptista.application.port.in.GetUrlAnalyticsUseCase;
-
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -33,27 +33,28 @@ public class UrlController {
         this.getUrlAnalyticsUseCase = getUrlAnalyticsUseCase;
     }
 
+
     @PostMapping
-public ResponseEntity<CreateUrlResponse> shorten(
-        @RequestBody CreateUrlRequest request,
-        HttpServletRequest httpRequest
+    public ResponseEntity<CreateUrlResponse> shorten(
+                @Valid @RequestBody CreateUrlRequest request,
+                HttpServletRequest httpRequest
 ) {
-    String clientKey = httpRequest.getRemoteAddr();
+        String clientKey = httpRequest.getRemoteAddr();
 
-    CreateShortUrlCommand command =
-            new CreateShortUrlCommand(
-                    request.originalUrl(),
-                    request.expiresAt(),
-                    clientKey
-            );
+        CreateShortUrlCommand command =
+                new CreateShortUrlCommand(
+                        request.originalUrl(),
+                        request.expiresAt(),
+                        clientKey
+                );
 
-    ShortUrlResult result =
-            createShortUrlUseCase.createShortUrl(command);
+        ShortUrlResult result =
+                createShortUrlUseCase.createShortUrl(command);
 
-    return ResponseEntity
-            .status(HttpStatus.CREATED)
-            .body(new CreateUrlResponse(result.shortCode()));
-}
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(new CreateUrlResponse(result.shortCode()));
+    }
 
     @GetMapping("/{shortCode}/analytics")
     public ResponseEntity<UrlAnalyticsResult> analytics(
@@ -71,6 +72,8 @@ public ResponseEntity<CreateUrlResponse> shorten(
     ) {
         deleteShortUrlUseCase.deleteShortUrl(shortCode);
 
-        return ResponseEntity.noContent().build();
+        return ResponseEntity
+                .noContent()
+                .build();
     }
 }

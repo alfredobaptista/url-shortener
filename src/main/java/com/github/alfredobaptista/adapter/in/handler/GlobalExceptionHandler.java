@@ -1,10 +1,11 @@
 package com.github.alfredobaptista.adapter.in.handler;
 
-import com.github.alfredobaptista.domain.exception.RateLimitExceededException;
+import com.github.alfredobaptista.application.exception.RateLimitExceededException;
 import com.github.alfredobaptista.domain.exception.UrlExpiredException;
 import com.github.alfredobaptista.domain.exception.UrlNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -36,6 +37,35 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleRateLimitExceeded(
+            RateLimitExceededException ex
+    ) {
+        return buildResponse(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                ex.getMessage()
+        );
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(
+            MethodArgumentNotValidException ex
+    ) {
+        String message = ex.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .map(error -> error.getDefaultMessage())
+                .findFirst()
+                .orElse("Dados de entrada inválidos.");
+
+        return buildResponse(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                message
+        );
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleBadRequest(
             IllegalArgumentException ex
@@ -46,17 +76,6 @@ public class GlobalExceptionHandler {
                 ex.getMessage()
         );
     }
-
-    @ExceptionHandler(RateLimitExceededException.class)
-public ResponseEntity<Map<String, Object>> handleRateLimitExceeded(
-        RateLimitExceededException ex
-) {
-    return buildResponse(
-            HttpStatus.TOO_MANY_REQUESTS,
-            "Too Many Requests",
-            ex.getMessage()
-    );
-}
 
     private ResponseEntity<Map<String, Object>> buildResponse(
             HttpStatus status,
