@@ -2,20 +2,21 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 export const options = {
-    vus: 100,  //virtual users
-    duration: '30s', //test duration
+    vus: 100,
+    duration: '30s',
 
     thresholds: {
-        http_req_failed: ['rate<0.01'], // http errors should be less than 1%
-        http_req_duration: ['p(95)<500'], // 95% of requests should be below 500ms
+        http_req_failed: ['rate<0.01'],
+        http_req_duration: ['p(95)<500'],
     },
 };
 
-const SHORT_CODE = 'at8Ovg'
+const BASE_URL = 'http://localhost:8080';
+const SHORT_CODE = 'at8Ovg';
 
 export default function () {
     const response = http.get(
-        `http://localhost:8080/${SHORT_CODE}`,
+        `${BASE_URL}/${SHORT_CODE}`,
         {
             redirects: 0,
         }
@@ -23,9 +24,9 @@ export default function () {
 
     check(response, {
         'status is 302': (r) => r.status === 302,
+        'has Location header': (r) => r.headers['Location'] !== undefined,
     });
 }
-
 
 
 //k6 run load-tests/redirect-load-test.js
